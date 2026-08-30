@@ -1,12 +1,12 @@
-# HomeworkIA
+# Homeworkia
 
 Throw your problem, get a step-by-step solution and ask whatever questions about the process. Works on mobile too
 
 ## Motivations & Morals
 
-**This website is entirely free**, cost me £3.50 (costs are discussed in insights) to make and **100% open sourced**. I intend to use it for my own personal use as I am studying my degree. It is supposed to be universal, however **excels in maths/physics**, with a lot of the stress testing being using my homework or, the homework of a very generous emergency nursing student in Morocco.
+**This website is entirely free**, cost me £3.50 (costs are discussed in Insights) to make and **100% open sourced**. I intend to use it for my own personal use as I am studying my degree. It is supposed to be universal, however **excels in maths/physics**, with a lot of the stress testing being using my homework or, the homework of a very generous emergency nursing student in Morocco.
 
-**HomeworkIA is *vibecoded***, pretty obviously too. However, it has still been a fun process and surprisingly harder then I had expected. Despite not writing a line of code besides some powershell configurations, glimpses of my creativity show in the features I came up with, or this README. The difficulty lies in the suprisingly high amount of management or errors to deal with, especially within omniroute, finding a way to maximise efficiency at a low cost is its own skill.
+**Homeworkia is *vibecoded***, pretty obviously too. However, it has still been a fun process, with its own set of challenges. Despite barely interfering in the coding process, besides to write a note or two or to create markdown files for this page, there has been a lot of work which I further discuss in Insights.
 
 *The technical part of this all comes next, such as the setup and the tools used, this is just to introduce and give an idea as to where this came from.*
 ## Tech Stack
