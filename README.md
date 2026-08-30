@@ -20,7 +20,7 @@ Throw your problem, get a step-by-step solution and ask whatever questions about
 
 ## Current status
 
-Currently, the Scaffolding and responsive UI uses **mock solve data** to verify the layout. The use of AI is accomplished via Groq Qwen 3.6 27B, with Gemini 3.7 Flash
+Currently, the Scaffolding and responsive UI uses **mock solve data** to verify the layout. The use of AI is accomplished via Groq Qwen 3.6 27B, Gemini 3.7 Flash and Cloudfare API, limited to both models previously aforementioned
 
 *Note: Omniroute was strictly for vibecoding and not needed in the actual live application itself*
 
