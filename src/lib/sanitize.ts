@@ -90,16 +90,30 @@ export function extractFinalValue(math: string): string | null {
     .filter(Boolean);
   const lastLine = lines[lines.length - 1] || m;
 
-  // Must have exactly one "=", with text only AFTER it (the value).
-  const eq = lastLine.lastIndexOf("=");
+  // Find the LAST TOP-LEVEL "=" — ignoring "=" nested inside {...} braces so we
+  // never split mid-formula. Models often write subscripts like
+  //   \sum_{n=-\infty, n \neq 0}^{\infty} \frac{2(-1)^n i}{n \pi} e^{...}
+  // where lastIndexOf("=") would land on the "n=-\infty" subscript and the old
+  // code then emitted a truncated "-\infty, n \neq 0}^{\infty} ..." answer.
+  // Scanning backwards with brace depth keeps the split at the real assignment.
+  let depth = 0;
+  let eq = -1;
+  for (let i = lastLine.length - 1; i >= 0; i--) {
+    const ch = lastLine[i];
+    if (ch === "}") depth++;
+    else if (ch === "{") depth--;
+    else if (ch === "=" && depth === 0) {
+      eq = i;
+      break;
+    }
+  }
   if (eq === -1) return null;
   const before = lastLine.slice(0, eq).trim();
   const value = lastLine.slice(eq + 1).trim();
   if (!value) return null;
 
-  // Reject if it's not a clean standalone value: no nested "=", no \text{...}
-  // sentence, no leftover \begin/\end, no spaces+letters (prose).
-  if (value.includes("=")) return null;
+  // Reject if it's not a clean standalone value: no \text{...} sentence, no
+  // leftover \begin/\end, no spaces+letters (prose).
   if (value.includes("\\text{")) return null;
   if (/\\begin|\\end/.test(value)) return null;
   if (/\s[A-Za-zÀ-ž]{2,}/.test(value)) return null; // word after space = prose

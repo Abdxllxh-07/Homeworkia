@@ -1,6 +1,8 @@
-# Insights
+# Insights & Credentials
 
-This page is meant to be for overall opinions I hold about the creation of this project, and the process of creating it. It is not meant to be a technical page, but rather a personal one. I will be documenting my thought process, errors that persisted and explained why I previously called this suprisingly harder then I had expected initally. Should you be inspired by me, there is also a set of suggestions on what to do.
+This page is meant to be for overall opinions I hold about the creation of this project, and the process of creating it. It is not meant to be a technical page, but rather a personal one. I will be documenting my thought process, errors that persisted and explained why I previously called this suprisingly harder then I had expected initally. 
+
+I also delve into a debate I have had with myself, about whether vibecoding is impressive, and I come to a conclusion at the end.
 
 ##### ***Disclaimer***
 
@@ -8,7 +10,7 @@ This page is meant to be for overall opinions I hold about the creation of this 
 
 ![Image of Omniroute homepage to show what it looks like](./Ijustneedyourpath.png) 
 
-### Being Broke
+### Financial Struggles with Omniroute
 
 The first and biggest struggle was doing this with essentially no money. For most of the project I was using free AI models via omniroute and setting them up was tedious within itself. I say essentially because I caved in towards the end and chipped in $5 to an API key provider, only for it to be useless. I regret losing my badge of honour that I made it for free, and regret more that it didn't even help. 
 
@@ -30,7 +32,21 @@ What I did was use the free services, aswell as expend the usage on the premium 
 
  Overall, there was a lot more managerial perspective to developing this website, which I enjoyed however it did come with "incompetence". 
 
- ### Would I recommend this?
+ ### Would I recommend this & Conclusions
 
- 100%. This is something which has been fun, educational and genuinely useful to me at least, it gives a newfound perspective and respect for web development, and lets you see the difference between a website made by AI and a website made by person. I still don't know the answer to if vibecoding itself is regarded as a skill/worthy of being called difficult, with my mind and ego willing to say it's tedious at best, but having faced challenges in this process, I can say for sure, it is an educational experience.
+ 100%. This is something which has been fun, educational and genuinely useful to me at least, it gives a newfound perspective and respect for web development, and lets you see the difference between a website made by AI and a website made by person. 
+
+
+ To speak more on if vibecoding is a skill, I will say that it is by far, easier and carries an entirely different skillset to coding manually. Instead of learning how to code, you are managing and coordinating many LLM's accordingly, to make sure that you dont exceed your tokens as per one example, specifically when using Omniroute. 
+
+ I believe it is ***not*** a skill in of itself, but it does develop your skills in management. However, the most important aspect of vibecoding is that you do learn, and you gain knowledge in different aspects.
+
+
+ ## Credits
+
+
+
+
+
+
 

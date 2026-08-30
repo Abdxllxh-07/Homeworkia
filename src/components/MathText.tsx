@@ -140,19 +140,34 @@ export function MathText({
    *  - Markdown bold `**text**` -> plain text (MathText does not render
    *    markdown, so strip the double-asterisk markers, not single ones which
    *    can be multiplication).
+   *  - Double-backslash LaTeX (JSON-double-escaped `\\( x \\)`, `\\[ y \\]`,
+   *    `\\frac`, `\\neq`) -> single backslash, so models that over-escaped
+   *    still render instead of showing literal `\( n \neq 0 \)` text.
    * This is universal for all subjects (math/chem/phys/medical explain prose).
    */
   const normalizeProse = (str: string): string =>
     str
-      // literal backslash-n -> newline (do NOT touch real newlines)
-      .replace(/\\n/g, "\n")
+      // literal backslash-n -> real newline, ONLY when that \n is NOT the start
+      // of a real LaTeX command (\neq, \ne) — a relationship, not a line break.
+      // Without this guard, "\neq" gets mangled into "\" + newline + "eq"
+      // which surfaces to the user as literal "n eq 0"-style text.
+      .replace(/\\(?!ne(?:q)?\b)n/g, "\n")
+      // collapse JSON-double-escaped delimiters \\\( \\\) \\\[ \\\] -> single
+      .replace(/\\\\([()\[\]])/g, "\\$1")
+      // collapse JSON-double-escaped LaTeX commands \\frac, \\neq -> single
+      .replace(/\\\\([a-zA-Z]+)/g, "\\$1")
       // bold markers **x** -> x
       .replace(/\*\*(.+?)\*\*/g, "$1");
 
   // Robustly render KaTeX as HTML without ever crashing React
   const safeKaTeX = (math: string, isBlock: boolean) => {
     try {
-      const html = katex.renderToString(math, {
+      // LLMs sometimes paste "≠" (raw unicode) or "\neq" INSIDE \text{...}
+      // ("\text{n ≠ 0}"). KaTeX cannot parse a relation inside \text{}; it
+      // errors, and we'd degrade the WHOLE expression to raw text. Split those
+      // text groups around the relation so the ≠ renders as real math.
+      const repaired = repairTextRelations(math);
+      const html = katex.renderToString(repaired, {
         displayMode: isBlock,
         throwOnError: false,
         strict: false,
@@ -186,23 +201,31 @@ export function MathText({
   // so KaTeX actually renders them instead of silently dropping them.
   // IMPORTANT: skip characters inside \\text{...} so prose is left intact.
   const simplifyMath = (str: string): string => {
+    // Collapse any JSON-double-escaped LaTeX: "\\frac" -> "\frac",
+    // "\\\\( ... \\\\)" -> "\( ... \)", so over-escaped models still render.
+    // Use the SAME order + \neq-preserving rule as normalizeProse so "\\neq"
+    // (or "\neq") never gets eaten as "\" + newline + "eq".
+    const normalized = str
+      .replace(/\\(?!ne(?:q)?\b)n/g, "\n")
+      .replace(/\\\\([()\[\]])/g, "\\$1")
+      .replace(/\\\\([a-zA-Z]+)/g, "\\$1");
     // Walk the string: when inside \text{...} or \mathrm{...}, don't convert.
     let out = "";
     let i = 0;
     let inText = false;
     let braceDepth = 0;
-    while (i < str.length) {
-      const ch = str[i];
+    while (i < normalized.length) {
+      const ch = normalized[i];
       if (!inText) {
         // Detect pseudo-commands first so \pH -> \text{pH}
-        const pseudo = /^\\(?:pH|pOH|pKa|pKb)\b/.exec(str.slice(i));
+        const pseudo = /^\\(?:pH|pOH|pKa|pKb)\b/.exec(normalized.slice(i));
         if (pseudo) {
           out += PSEUDO_COMMANDS[pseudo[0]];
           i += pseudo[0].length;
           continue;
         }
         // Detect entering \text{ or \mathrm{ or \operatorname{
-        const m = /^\\(?:text|mathrm|operatorname|mbox)\s*\{/.exec(str.slice(i));
+        const m = /^\\(?:text|mathrm|operatorname|mbox)\s*\{/.exec(normalized.slice(i));
         if (m) {
           inText = true;
           braceDepth = 1;
@@ -214,7 +237,7 @@ export function MathText({
         if (SUBSCRIPT_MAP[ch]) {
           let run = "";
           let j = i;
-          while (j < str.length && SUBSCRIPT_MAP[str[j]]) {
+          while (j < normalized.length && SUBSCRIPT_MAP[normalized[j]]) {
             run += str[j];
             j += 1;
           }
@@ -226,8 +249,8 @@ export function MathText({
         if (ch === "⁻" || SUPERSCRIPT_MAP[ch]) {
           let run = "";
           let j = i;
-          while (j < str.length && (str[j] === "⁻" || str[j] === "⁺" || SUPERSCRIPT_MAP[str[j]])) {
-            run += str[j];
+          while (j < normalized.length && (normalized[j] === "⁻" || normalized[j] === "⁺" || SUPERSCRIPT_MAP[normalized[j]])) {
+            run += normalized[j];
             j += 1;
           }
           let sign = "";
@@ -260,6 +283,64 @@ export function MathText({
         i += 1;
       }
     }
+    return out;
+  };
+
+  /**
+   * Universal repair for math strings where the LLM put a RELATION ( \neq,
+   * \ne, \not=, or a pasted unicode ≠ ) INSIDE a \text{...} group — e.g.
+   * "\text{n ≠ 0}", "\text{a \neq b}". KaTeX cannot parse a relation command or
+   * the unicode ≠ glyph inside \text{} (it errors), which makes safeKaTeX
+   * degrade the WHOLE expression to raw visible text ("n eq 0" / "\text{...}").
+   *
+   * Fix: split the \text{} group around the relation so the relation renders as
+   * real math (real ≠ glyph) and the surrounding words stay as text:
+   *   "\text{n ≠ 0}"  -> "\text{n } \neq \text{0}"
+   *   "\text{a \neq b}" -> "\text{a } \neq \text{b}"
+   * This is fully universal (any subject/question) and only fires when a
+   * relation actually appears inside text, so prose-only \text{} is untouched.
+   */
+  const repairTextRelations = (math: string): string => {
+    // \text{...} / \mbox{...} groups WITHOUT nested braces (common case).
+    const groupRe = /\\(?:text|mbox)\{([^{}]*)\}/g;
+    let out = "";
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = groupRe.exec(math)) !== null) {
+      out += math.slice(last, m.index);
+      const inner = m[1];
+      // Order matters: test the longer forms first so "\neq" isn't eaten as
+      // "\ne" + "q". \not= is an alternate spelling LLMs use.
+      const relRe = /\\not\\neq|\\not=|\u2260|\\neq|\\ne/g;
+      // Manually walk the text group, toggling between plain-text segments and
+      // the relations between them, building the split output:
+      //   "\text{n ≠ 0 and m ≠ 2}" -> "\text{n } \neq \text{0 and m } \neq \text{2}"
+      const rels: { index: number; word: string }[] = [];
+      let rm: RegExpExecArray | null;
+      while ((rm = relRe.exec(inner)) !== null) {
+        rels.push({ index: rm.index, word: rm[0] });
+      }
+      if (rels.length === 0) {
+        // No relation inside — leave the group untouched.
+        out += m[0];
+      } else {
+        let cursor = 0;
+        let built = "";
+        for (let r = 0; r < rels.length; r++) {
+          const rel = rels[r];
+          const seg = inner.slice(cursor, rel.index).trim();
+          if (seg) built += "\\text{" + seg + "} ";
+          built += (rel.word === "\u2260" ? "\\neq" : rel.word) + " ";
+          cursor = rel.index + rel.word.length;
+        }
+        const tail = inner.slice(cursor).trim();
+        if (tail) built += "\\text{" + tail + "}";
+        // strip trailing spaces where the tail was empty
+        out += built.replace(/\\text\{\}\s*/g, "").replace(/\s+$/g, "");
+      }
+      last = m.index + m[0].length;
+    }
+    out += math.slice(last);
     return out;
   };
 
@@ -383,7 +464,24 @@ export function MathText({
         if (!isClosed) {
           while (idx + 1 < parts.length && !parts[idx + 1].math) {
             const nextText = parts[idx + 1].text;
-            const nextIsProse = /[A-Za-zÀ-ž]{2,}/.test(nextText);
+            // A differential tail (", dx", "\, dx", "\mathrm{d}x", " dt", ...)
+            // is REAL math, even though "dx" matches the 2-letter-prose test.
+            // If we drop it, the preceding run stays unbalanced (the \frac{..}
+            // is missing its "}") and KaTeX errors + degrades to raw text.
+            // "dx"/"dy"/"dt"/"du" are a safe tight set: real prose words are
+            // longer or common English ("due", "da", "do" handled as words).
+            // A lone "}" (or "} " + differential) is the closing brace of
+            // the PREVIOUS math token, so requiring the fragment to END after
+            // "}" ensures real prose like "} next formula" never gets absorbed.
+            const isDifferentialTail =
+              (/^\s*\\?\,?\s*(?:\\mathrm\{d\}|\\text\{d\}|[dD](?:x|y|z|t|u|v|r|s|θ|a|s|V))(?:\s|$)/.test(
+                nextText
+              )) ||
+              /^\s*\}(?:\s*\\?\,?\s*[dD][A-Za-z](?:\s|$))?$/.test(nextText);
+            const nextIsProse =
+              isDifferentialTail
+                ? false
+                : /[A-Za-zÀ-ž]{2,}/.test(nextText);
             if (nextIsProse) break;
             run += nextText;
             idx += 1;

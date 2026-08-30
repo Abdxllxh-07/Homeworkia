@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ClipboardEvent } from "react";
 import { useDropzone } from "react-dropzone";
 import { Camera, ImagePlus, Upload, X } from "lucide-react";
@@ -22,6 +22,22 @@ export function ImageDropzone({
   // label htmlFor === input id match after hydration.
   const pickerId = useId();
   const cameraId = `${pickerId}-camera`;
+
+  // "Use camera" only works on phones/tablets (it opens the device camera via
+  // capture="environment"). On a desktop the input would just open a boring
+  // file picker — so we show a polite popup instead and keep the real camera
+  // input closed.
+  const [cameraWarning, setCameraWarning] = useState(false);
+  const isTouchDevice =
+    typeof window !== "undefined" &&
+    window.matchMedia("(pointer: coarse) and (hover: none)").matches;
+
+  // Auto-dismiss the warning after a few seconds so it never lingers.
+  useEffect(() => {
+    if (!cameraWarning) return;
+    const t = window.setTimeout(() => setCameraWarning(false), 4500);
+    return () => window.clearTimeout(t);
+  }, [cameraWarning]);
 
   // React's synthetic onChange (root-delegated) is FLAKY for <input type="file">
   // on real mobile devices — the picker opens, the file is selected, but the
@@ -95,6 +111,17 @@ export function ImageDropzone({
     };
   }, [handleDrop]);
 
+  const handleCameraClick = useCallback(
+    (e: React.MouseEvent<HTMLLabelElement>) => {
+      if (disabled) return;
+      if (isTouchDevice) return; // mobile: let the native input open the camera
+      // Desktop: don't open the hidden file input — show the notice instead.
+      e.preventDefault();
+      setCameraWarning(true);
+    },
+    [disabled, isTouchDevice],
+  );
+
   return (
     <section
       className="w-full"
@@ -120,7 +147,7 @@ export function ImageDropzone({
             </div>
             <div className="space-y-1">
               <p className="text-lg font-semibold text-foreground">
-                {isDragActive ? "Drop it here" : "Drop a homework photo"}
+                {isDragActive ? "Drop it here" : "Drop or paste your photo here"}
               </p>
               <p className="text-sm text-muted">
                 PNG, JPG, or WEBP — or take a photo on mobile
@@ -146,6 +173,7 @@ export function ImageDropzone({
             <label
               htmlFor={cameraId}
               aria-disabled={disabled}
+              onClick={handleCameraClick}
               style={{ touchAction: "manipulation" }}
               className={
                 "inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-xl border-2 border-border bg-surface px-6 py-3 text-sm font-semibold text-foreground transition hover:bg-surface-soft hover:border-accent/40 active:scale-[0.98] " +
@@ -156,6 +184,30 @@ export function ImageDropzone({
               Use camera
             </label>
           </div>
+
+          {cameraWarning && (
+            <div
+              role="status"
+              className="mx-auto mt-3 flex max-w-md items-start gap-2 rounded-xl border border-accent/30 bg-accent-soft/70 px-4 py-3 text-sm text-accent-ink"
+            >
+              <Camera className="mt-0.5 h-4 w-4 shrink-0" />
+              <span className="min-w-0">
+                <span className="font-semibold">Use camera</span> only works on
+                mobile devices. On a PC, use{" "}
+                <span className="font-semibold">Choose image</span> or press{" "}
+                <span className="font-semibold">Ctrl/Cmd+V</span> to paste a
+                screenshot.
+              </span>
+              <button
+                type="button"
+                onClick={() => setCameraWarning(false)}
+                className="ml-auto shrink-0 rounded-lg p-1 text-accent-ink/70 transition hover:bg-accent-soft hover:text-accent-ink"
+                aria-label="Dismiss"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="relative overflow-hidden rounded-2xl border border-border bg-surface shadow-[var(--shadow)]">

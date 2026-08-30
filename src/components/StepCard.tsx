@@ -38,7 +38,7 @@ export function StepCard({ step, displayNumber, onAsk }: StepCardProps) {
           </span>
           <div className="min-w-0 flex-1 space-y-2">
             <h3 className="text-base font-semibold text-foreground sm:text-lg">
-              {step.title}
+              <MathText className="text-inherit">{step.title}</MathText>
             </h3>
             <p className="text-sm leading-relaxed text-muted sm:text-[15px] min-w-0">
               <MathText>{step.explanation}</MathText>
