@@ -31,3 +31,4 @@ What I did was use the free services, aswell as expend the usage on the premium 
  Overall, there was a lot more managerial perspective to developing this website, which I enjoyed however it did come with "incompetence". 
 
 
+S
