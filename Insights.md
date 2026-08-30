@@ -30,5 +30,7 @@ What I did was use the free services, aswell as expend the usage on the premium 
 
  Overall, there was a lot more managerial perspective to developing this website, which I enjoyed however it did come with "incompetence". 
 
+ ### Would I recommend this?
 
-S
+ 100%. This is something which has been fun, educational and genuinely useful to me at least, it gives a newfound perspective and respect for web development, and lets you see the difference between a website made by AI and a website made by person. I still don't know the answer to if vibecoding itself is regarded as a skill/worthy of being called difficult, with my mind and ego willing to say it's tedious at best, but having faced challenges in this process, I can say for sure, it is an educational experience.
+
