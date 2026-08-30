@@ -1,6 +1,6 @@
 "use client";
 
-import { BlockMath, InlineMath } from "react-katex";
+import katex from "katex";
 import { Fragment } from "react";
 
 type MathTextProps = {
@@ -9,11 +9,120 @@ type MathTextProps = {
   className?: string;
 };
 
-const MATH_FRAGMENT_RE =
-  /(?:\\frac|\\dfrac|\\sqrt|\\sum|\\int|\\lim|\\log|\\ln|\\sin|\\cos|\\tan|\\pm|\\times|\\cdot|\\div|\\leq|\\geq|\\neq|\\approx|\\Rightarrow|\\rightarrow|\\alpha|\\beta|\\pi|\\infty|\\quad|\\mathbb|\\text|\\begin|\\end|[A-Za-z](\^\{[^}]*\}|_\{[^}]*\})+)/;
+/** KaTeX silently drops raw Unicode Greek/math glyphs in math mode.
+ *  Convert them to their LaTeX command equivalents so they actually render. */
+const UNICODE_TO_LATEX: Record<string, string> = {
+  // Lowercase Greek
+  "α": "\\alpha", "β": "\\beta", "γ": "\\gamma", "δ": "\\delta",
+  "ε": "\\epsilon", "ζ": "\\zeta", "η": "\\eta", "θ": "\\theta",
+  "ι": "\\iota", "κ": "\\kappa", "λ": "\\lambda", "μ": "\\mu",
+  "ν": "\\nu", "ξ": "\\xi", "π": "\\pi", "ρ": "\\rho",
+  "σ": "\\sigma", "τ": "\\tau", "υ": "\\upsilon", "φ": "\\phi",
+  "χ": "\\chi", "ψ": "\\psi", "ω": "\\omega", "ϑ": "\\vartheta",
+  "ϕ": "\\varphi", "ϱ": "\\varrho", "ς": "\\varsigma",
+  // Uppercase Greek
+  "Γ": "\\Gamma", "Δ": "\\Delta", "Θ": "\\Theta", "Λ": "\\Lambda",
+  "Ξ": "\\Xi", "Π": "\\Pi", "Σ": "\\Sigma", "Υ": "\\Upsilon",
+  "Φ": "\\Phi", "Ψ": "\\Psi", "Ω": "\\Omega",
+  // Operators & relations
+  "×": "\\times", "÷": "\\div", "±": "\\pm", "∓": "\\mp",
+  "≠": "\\neq", "≤": "\\leq", "≥": "\\geq", "≈": "\\approx",
+  "≡": "\\equiv", "∝": "\\propto", "∞": "\\infty",
+  "∑": "\\sum", "∏": "\\prod", "∫": "\\int", "√": "\\sqrt",
+  "∂": "\\partial", "∇": "\\nabla", "∈": "\\in", "∉": "\\notin",
+  "⊂": "\\subset", "⊆": "\\subseteq", "∪": "\\cup", "∩": "\\cap",
+  "∀": "\\forall", "∃": "\\exists", "∅": "\\emptyset",
+  "→": "\\rightarrow", "←": "\\leftarrow", "↔": "\\leftrightarrow",
+  "⇒": "\\Rightarrow", "⇐": "\\Leftarrow", "⇔": "\\Leftrightarrow",
+  "·": "\\cdot", "…": "\\dots", "°": "^{\\circ}",
+  "ℝ": "\\mathbb{R}", "ℕ": "\\mathbb{N}", "ℤ": "\\mathbb{Z}",
+  "ℚ": "\\mathbb{Q}", "ℂ": "\\mathbb{C}",
+};
 
-function hasMathFragment(text: string): boolean {
-  return /\\[a-zA-Z]+/.test(text.replace(/\\\\/g, ""));
+const SUBSCRIPT_MAP: Record<string, string> = {
+  "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+  "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+};
+
+// Superscript digits and signs: used to normalize 10⁻³ → 10^{-3}
+const SUPERSCRIPT_MAP: Record<string, string> = {
+  "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+  "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+  "⁻": "-", "⁺": "+", "ⁿ": "n", "ᵏ": "k", "ˣ": "x",
+};
+
+/** Common pseudo-commands the LLMs emit that KaTeX doesn't know. */
+const PSEUDO_COMMANDS: Record<string, string> = {
+  "\\pH": "\\text{pH}",
+  "\\pOH": "\\text{pOH}",
+  "\\pKa": "\\text{pKa}",
+  "\\pKb": "\\text{pKb}",
+};
+
+/**
+ * Detect whether a "math" string is actually mostly PROSE (a clinical list,
+ * drug-dosage table, calculation walkthrough, contraindication list, etc.)
+ * rather than a real formula. LLMs routinely stuff readable text + units into
+ * `mathFormula`. Rendering that through KaTeX produces a long unbreakable
+ * horizontal line that overflows the box on any screen (esp. mobile). We detect
+ * it and render as readable, vertically-wrapping text with inline math instead.
+ *
+ * Heuristics (any strong signal => prose):
+ *  - Several full alphabetic words (either bare in math mode, or inside
+ *    \text{}/\mathrm{}), i.e. >= 3 words of length >= 4.
+ *  - A measurement unit suffix (mg, kg, ml, mL, μg/mol etc.) repeated several
+ *    times, which real formulas almost never have as bare text.
+ *  - Multi-line content with the pattern of a heading word followed by " = "
+ *    (e.g. "Concentration = 0.16 mg/mL") which is a calculation walkthrough.
+ *
+ * IMPORTANT: this deliberately returns FALSE whenever the string contains a
+ * real LaTeX alignment environment (\begin{aligned}/\begin{align}/\begin{cases}
+ * etc. plus a closing \end{...}). Those are REAL multi-line math — KaTeX renders
+ * them correctly with the & alignment markers, and splitting them into prose
+ * lines would break every `&`. (Prose never contains \begin{...}.)
+ */
+function isProseHeavy(math: string): boolean {
+  const lines = math.split(/\n|\\\\/).filter((l) => l.trim().length > 0);
+
+  // Real LaTeX alignment environment => real multi-line math; never prose.
+  if (/\\begin\{aligned\}|\\(?:align|align\*|aligned|array|matrix|cases|gathered|split)\b/.test(math) &&
+      /\\end\{[^}]*\}/.test(math)) {
+    return false;
+  }
+
+  // 1) Words anywhere — bare in math mode OR inside \text{}/\mathrm{} — after
+  //    dropping LaTeX command names themselves.
+  const words =
+    math
+      .replace(/\\[a-zA-Z]+/g, " ")
+      .match(/(?:\\text|\\mathrm|\\mbox|\\operatorname)\s*\{([^{}]*)\}|[A-Za-zÀ-ž]{2,}/g) || [];
+  const longWords = words
+    .map((w) => w.replace(/^\\(?:text|mathrm|mbox|operatorname)\s*\{/, "").replace(/\}$/, ""))
+    .filter((w) => /[A-Za-zÀ-ž]/.test(w) && w.length >= 4);
+  if (longWords.length >= 3) return true;
+
+  // 2) Repeated measurement units (mg, kg, ml, μg, mmol, etc.) as a sign of a
+  //    drug-dosage / clinical calculation rather than a pure formula.
+  const units = math.match(/\b(?:mg|kg|g|mL|ml|L|μg|ug|µg|mmol|mol|mEq|IU|kg\/min|ml\/h|mg\/kg)\b/gi) || [];
+  if (units.length >= 3) return true;
+
+  // 3) Multi-line calculation-walkthrough pattern: a line with alphabetic
+  //    prose heading plus " = " (e.g. "Concentration = 0.16 mg/mL" or
+  //    "Vitesse SAP = 0.78 mg/h"). These are readable calcs, not formulas.
+  //    Skip lines that still carry a dangling aligned-env marker (a lone
+  //    "\begin{aligned}" or "&" tail fragment) — those belong to real math.
+  if (lines.length >= 2) {
+    const calcLines = lines.filter((l) => {
+      if (l.includes("&") && !/\\text\{[^}]*&/.test(l)) return false;
+      return (
+        /[A-Za-zÀ-ž]{2,}/.test(l) &&
+        /^\s*[A-Za-zÀ-ž][A-Za-zÀ-ž0-9 ()µμg/.]*\s*=\s*/.test(l)
+      );
+    });
+    if (calcLines.length >= 2) return true;
+  }
+
+  return false;
 }
 
 /** Renders KaTeX for pure formulas, or mixed prose with \\( ... \\) / \\[ ... \\]. */
@@ -24,96 +133,404 @@ export function MathText({
 }: MathTextProps) {
   const text = children.trim();
 
-  // ---- Display mode: the whole string is (or should be) one formula ----
+  /**
+   * Clean messy LLM prose before tokenizing/render:
+   *  - Literal "\n" (backslash + n) that the model emitted as a character
+   *    instead of a real newline -> real newline.
+   *  - Markdown bold `**text**` -> plain text (MathText does not render
+   *    markdown, so strip the double-asterisk markers, not single ones which
+   *    can be multiplication).
+   * This is universal for all subjects (math/chem/phys/medical explain prose).
+   */
+  const normalizeProse = (str: string): string =>
+    str
+      // literal backslash-n -> newline (do NOT touch real newlines)
+      .replace(/\\n/g, "\n")
+      // bold markers **x** -> x
+      .replace(/\*\*(.+?)\*\*/g, "$1");
+
+  // Robustly render KaTeX as HTML without ever crashing React
+  const safeKaTeX = (math: string, isBlock: boolean) => {
+    try {
+      const html = katex.renderToString(math, {
+        displayMode: isBlock,
+        throwOnError: false,
+        strict: false,
+      });
+      // KaTeX injects red ".katex-error" spans when a formula fails to parse.
+      // Those render as "undefined"/raw fragments and look broken. Degrade to
+      // readable, wrapping plain text instead so nothing ever shows a red
+      // error — the math may be imperfect but it is always fully readable.
+      if (html.includes("katex-error")) {
+        return (
+          <span className="whitespace-pre-wrap break-words">{math}</span>
+        );
+      }
+      return (
+        <span
+          className={
+            isBlock
+              ? "block my-2 overflow-x-auto max-w-full"
+              : "inline-block align-middle max-w-full overflow-x-auto"
+          }
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      );
+    } catch (e) {
+      console.error("KaTeX Error:", e);
+      return <span className="whitespace-pre-wrap break-words">{math}</span>;
+    }
+  };
+
+  // Convert raw Unicode math glyphs (μ, α, β, ×, ≤, etc.) into LaTeX commands
+  // so KaTeX actually renders them instead of silently dropping them.
+  // IMPORTANT: skip characters inside \\text{...} so prose is left intact.
+  const simplifyMath = (str: string): string => {
+    // Walk the string: when inside \text{...} or \mathrm{...}, don't convert.
+    let out = "";
+    let i = 0;
+    let inText = false;
+    let braceDepth = 0;
+    while (i < str.length) {
+      const ch = str[i];
+      if (!inText) {
+        // Detect pseudo-commands first so \pH -> \text{pH}
+        const pseudo = /^\\(?:pH|pOH|pKa|pKb)\b/.exec(str.slice(i));
+        if (pseudo) {
+          out += PSEUDO_COMMANDS[pseudo[0]];
+          i += pseudo[0].length;
+          continue;
+        }
+        // Detect entering \text{ or \mathrm{ or \operatorname{
+        const m = /^\\(?:text|mathrm|operatorname|mbox)\s*\{/.exec(str.slice(i));
+        if (m) {
+          inText = true;
+          braceDepth = 1;
+          out += m[0];
+          i += m[0].length;
+          continue;
+        }
+        // Normalize unicode subscripts "H₂O" -> "H_{2}O"
+        if (SUBSCRIPT_MAP[ch]) {
+          let run = "";
+          let j = i;
+          while (j < str.length && SUBSCRIPT_MAP[str[j]]) {
+            run += str[j];
+            j += 1;
+          }
+          out += `_{${run.split("").map((d) => SUBSCRIPT_MAP[d]).join("")}}`;
+          i = j;
+          continue;
+        }
+        // Normalize unicode superscripts "10⁻³" -> "10^{-3}"
+        if (ch === "⁻" || SUPERSCRIPT_MAP[ch]) {
+          let run = "";
+          let j = i;
+          while (j < str.length && (str[j] === "⁻" || str[j] === "⁺" || SUPERSCRIPT_MAP[str[j]])) {
+            run += str[j];
+            j += 1;
+          }
+          let sign = "";
+          let digits = "";
+          if (run[0] === "⁻" || run[0] === "⁺") {
+            sign = run[0] === "⁻" ? "-" : "+";
+            digits = run.slice(1).split("").map((d) => SUPERSCRIPT_MAP[d]).join("");
+          } else {
+            digits = run.split("").map((d) => SUPERSCRIPT_MAP[d]).join("");
+          }
+          out += `^{${sign}${digits}}`;
+          i = j;
+          continue;
+        }
+        if (UNICODE_TO_LATEX[ch]) {
+          out += `${UNICODE_TO_LATEX[ch]} `;
+          i += 1;
+          continue;
+        }
+        out += ch;
+        i += 1;
+      } else {
+        // Inside \text{...}: copy as-is, tracking braces.
+        if (ch === "{") braceDepth += 1;
+        else if (ch === "}") {
+          braceDepth -= 1;
+          if (braceDepth === 0) inText = false;
+        }
+        out += ch;
+        i += 1;
+      }
+    }
+    return out;
+  };
+
+  /** Split mixed prose+math into tokens: math runs (delimited or bare \cmd{...}) and plain text runs. */
+  const splitMixed = (str: string): { text: string; math: boolean }[] => {
+    // Capture a full \begin{...} ... \end{...} environment as ONE math token,
+    // so aligned/equation blocks never get fragmented (each & stays valid).
+    const envRe = /\\begin\{[a-zA-Z*]+\}[\s\S]*?\\end\{[a-zA-Z*]+\}/g;
+
+    // Regex matching:
+    //  - \[ ... \] , \( ... \) , $$ ... $$ , $ ... $
+    //  - a bare LaTeX command with a brace group: \frac{..}{..}, \mu, \text{..}, etc.
+    const re =
+      /(\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$\$[\s\S]*?\$\$|\$[^$\n]+?\$|\\[a-zA-Z]+\s*(?:\[[^\]]*\])?\s*\{[^{}]*\}(?:\s*\{[^{}]*\})?|\\[a-zA-Z]+)/g;
+    const parts: { text: string; math: boolean }[] = [];
+    let m: RegExpExecArray | null;
+
+    // First pass: walk over environments. Between them, find the simple tokens.
+    // Absorb an enclosing $$ / $ / \[ / \( wrapper (with optional whitespace)
+    // into the env token so the wrapper never leaks as a lone visible "$"/"$$".
+    const envMatches: { start: number; end: number; text: string }[] = [];
+    let em: RegExpExecArray | null;
+    while ((em = envRe.exec(str)) !== null) {
+      let start = em.index;
+      let end = em.index + em[0].length;
+      const before = str.slice(0, start);
+      const after = str.slice(end);
+      // preceding wrapper: optional whitespace then $$ / $ / \[ / \(
+      const pre = /(\s*)(?:\$\$|\$|\\\[|\\\()\s*$/.exec(before);
+      if (pre) start -= pre[0].length;
+      // following wrapper: optional whitespace then $$ / $ / \] / \)
+      const post = /^\s*(?:\$\$|\$|\\\]|\\\))/.exec(after);
+      if (post) end += post[0].length;
+      envMatches.push({ start, end, text: str.slice(start, end).trim() });
+    }
+
+    let cursor = 0;
+    for (const env of envMatches) {
+      // Emit simple tokens between cursor and this env
+      const between = str.slice(cursor, env.start);
+      if (between) {
+        let last2 = 0;
+        while ((m = re.exec(between)) !== null) {
+          const start = m.index;
+          if (start > last2) parts.push({ text: between.slice(last2, start), math: false });
+          parts.push({ text: m[0], math: true });
+          last2 = start + m[0].length;
+        }
+        if (last2 < between.length) parts.push({ text: between.slice(last2), math: false });
+      }
+      parts.push({ text: env.text, math: true });
+      cursor = env.end;
+    }
+    // Trailing simple tokens after the last env
+    const remaining = str.slice(cursor);
+    if (remaining) {
+      let last2 = 0;
+      while ((m = re.exec(remaining)) !== null) {
+        const start = m.index;
+        if (start > last2) parts.push({ text: remaining.slice(last2, start), math: false });
+        parts.push({ text: m[0], math: true });
+        last2 = start + m[0].length;
+      }
+      if (last2 < remaining.length) parts.push({ text: remaining.slice(last2), math: false });
+    }
+
+    // Fallback: if the env regex matched nothing, run the original single pass.
+    if (envMatches.length === 0) {
+      parts.length = 0;
+      let last2 = 0;
+      while ((m = re.exec(str)) !== null) {
+        const start = m.index;
+        if (start > last2) parts.push({ text: str.slice(last2, start), math: false });
+        parts.push({ text: m[0], math: true });
+        last2 = start + m[0].length;
+      }
+      if (last2 < str.length) parts.push({ text: str.slice(last2), math: false });
+    }
+
+    // If the string contains explicit inline/display math delimiters (\(..\),
+    // \[..\], $$..$$), the delimiters ALREADY separate math from prose — so we
+    // must NOT collapse the whole string into a single math block, even when the
+    // surrounding text has no 2+ letter prose words (e.g. "<math> à <math>").
+    // Rendering each delimited group separately keeps both sides intact.
+    const hasExplicitDelims =
+      str.includes("\\(") || str.includes("\\[") || str.includes("$$");
+
+    // Merge adjacent text token + math token + text token when the *entire*
+    // string looks like pure math (e.g. the mock: "x = 3 \quad \text{or} \quad x = -1/2").
+    // In that case render the whole thing as one KaTeX block instead of fragmented tokens.
+    const hasText = parts.some((p) => !p.math);
+    if (!hasText) {
+      return [{ text: str, math: true }];
+    }
+
+    // Group: if the whole non-math text has no real prose words, it's pure math
+    // with \text{} / \quad spacing — render as a single KaTeX block.
+    // BUT if explicit delimiters are present, skip this collapse (handled above).
+    const textBits = parts.filter((p) => !p.math).map((p) => p.text).join(" ");
+    const hasProseWord = /[A-Za-zÀ-ž]{2,}/.test(textBits);
+    if (!hasExplicitDelims && !hasProseWord) {
+      return [{ text: str, math: true }];
+    }
+
+    // Otherwise: merge *adjacent* math tokens and the short text fragments between
+    // them (like " = ", "1.2 ", "10^{-5}") into single math runs, BUT keep any
+    // fragment containing a 2+ letter alphabetic word as text.
+    const merged: { text: string; math: boolean }[] = [];
+    for (let idx = 0; idx < parts.length; idx++) {
+      const part = parts[idx];
+      if (part.math) {
+        // Start a math run; absorb following text pieces that contain no prose word.
+        // But if this token is a *closed delimiter* (\(..\) / \[..\] / $$..$$), never
+        // absorb following text — the delimiter already delimits the math.
+        const isClosed =
+          (part.text.startsWith("\\(") && part.text.endsWith("\\)")) ||
+          (part.text.startsWith("\\[") && part.text.endsWith("\\]")) ||
+          (part.text.startsWith("$$") && part.text.endsWith("$$")) ||
+          (part.text.startsWith("$") && part.text.endsWith("$") && part.text.length > 2);
+        let run = part.text;
+        if (!isClosed) {
+          while (idx + 1 < parts.length && !parts[idx + 1].math) {
+            const nextText = parts[idx + 1].text;
+            const nextIsProse = /[A-Za-zÀ-ž]{2,}/.test(nextText);
+            if (nextIsProse) break;
+            run += nextText;
+            idx += 1;
+            // absorb any following math tokens too
+            while (idx + 1 < parts.length && parts[idx + 1].math) {
+              run += " " + parts[idx + 1].text;
+              idx += 1;
+            }
+          }
+        }
+        merged.push({ text: run, math: true });
+      } else {
+        merged.push(part);
+      }
+    }
+
+    return merged;
+  };
+
+  // ---- Display mode ----
   if (display) {
     let math = text;
-    // Strip a single pair of outer display delimiters if present.
-    if (/^\\\[[\s\S]*\\\]$/.test(math)) {
-      math = math.slice(2, -2).trim();
-    } else if (/^\$\$[\s\S]*\$\$$/.test(math)) {
-      math = math.slice(2, -2).trim();
-    }
+    if (/^\\\[[\s\S]*\\\]$/.test(math)) math = math.slice(2, -2).trim();
+    else if (/^\$\$[\s\S]*\$\$$/.test(math)) math = math.slice(2, -2).trim();
 
-    try {
+    // If this "display" content is actually prose (clinical lists, drug tables,
+    // contraindications...), render it as readable, wrapping text with inline
+    // math rather than one unbreakable KaTeX line. This universally fixes the
+    // "text overflowing outside the box" bug for those subjects/questions.
+    if (isProseHeavy(math)) {
+      const lines = math
+        .split(/\n|\\\\/)
+        .map((l) => l.trim())
+        .filter(Boolean);
       return (
-        <div className={className}>
-          <BlockMath
-            math={math}
-            renderError={() => <span>{math}</span>}
-          />
+        <div className={`mx-auto w-full max-w-full ${className}`}>
+          {lines.map((line, i) => (
+            <div
+              key={i}
+              className="w-full min-w-0 break-words leading-relaxed"
+            >
+              <MathText>{line}</MathText>
+            </div>
+          ))}
         </div>
       );
-    } catch {
-      return <span className={className}>{math}</span>;
     }
+
+    return (
+      <div className={`mx-auto w-full max-w-full overflow-x-auto ${className}`}>
+        {safeKaTeX(simplifyMath(math), true)}
+      </div>
+    );
   }
 
-  // ---- Inline mode: plain prose, no delimiters ----
-  if (
-    !text.includes("\\(") &&
-    !text.includes("\\[") &&
-    !text.includes("$") &&
-    !hasMathFragment(text)
-  ) {
-    return <span className={className}>{text}</span>;
+  // ---- Pure plain text (no math at all) ----
+  // For non-display prose, clean literal "\n" and markdown "**" first, and
+  // preserve real newlines so bullets/list items appear on their own lines.
+  const cleanedProse = normalizeProse(text);
+  if (!cleanedProse.includes("\\") && !cleanedProse.includes("$") && !cleanedProse.includes("\n")) {
+    return <span className={className}>{cleanedProse}</span>;
   }
 
   // ---- Mixed prose + math ----
-  const parts = text.split(
-    /(\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$\$[\s\S]*?\$\$|\$[^$\n]+?\$)/g,
-  );
+  // If this is a multi-line prose explanation, render each line separately
+  // (so newlines and bullets actually break), recursively handling inline math.
+  const proseLines = cleanedProse.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+
+  // BUT: multi-line MATH BLOCKS must NOT be line-split — splitting them into
+  // "$$" / "\text{...}" / "\end{aligned}" fragments makes KaTeX fail on each
+  // piece and the raw delimiters/commands appear as literal text. Detect them
+  // and keep them whole:
+  //   1) $$...$$ or \[...\] wrapping a \begin{aligned} environment.
+  //   2) A BARE \begin{...}...\end{...} environment — LLMs often omit the $$
+  //      wrapper; the & alignment operators are only valid INSIDE the env, so
+  //      fragmenting it breaks every line. (Prose never contains \begin{...}.)
+  const isMultilineMathBlock =
+    (cleanedProse.startsWith("$$") && cleanedProse.endsWith("$$")) ||
+    (cleanedProse.startsWith("\\[") && cleanedProse.endsWith("\\]"));
+  const containsEnv = /\\begin\{[a-zA-Z*]+\}[\s\S]*?\\end\{[a-zA-Z*]+\}/.test(cleanedProse);
+
+  if (proseLines.length > 1 && !isMultilineMathBlock && !containsEnv) {
+    return (
+      <span className={`block space-y-1 ${className}`.trim()}>
+        {proseLines.map((line, i) => (
+          <span key={i} className="block min-w-0 break-words">
+            <MathText>{line}</MathText>
+          </span>
+        ))}
+      </span>
+    );
+  }
+
+  // A multi-line math BLOCK ($$...$$ or \[...\]) is atomic — render it as a
+  // single KaTeX display block (like display mode), never through splitMixed,
+  // so an internal \begin{aligned}...\end{aligned} stays whole instead of
+  // fragmenting into raw "$$" / "\text{...}" / "\end{aligned}" visible text.
+  if (isMultilineMathBlock) {
+    let math = cleanedProse;
+    if (math.startsWith("$$") && math.endsWith("$$")) math = math.slice(2, -2).trim();
+    else math = math.slice(2, -2).trim();
+    return (
+      <span className={`block my-2 overflow-x-auto max-w-full ${className}`.trim()}>
+        {safeKaTeX(simplifyMath(math), true)}
+      </span>
+    );
+  }
+
+  const tokens = splitMixed(cleanedProse);
 
   return (
     <span className={className}>
-      {parts.map((part, index) => {
-        if (!part) return null;
+      {tokens.map((token, index) => {
+        if (!token.math) {
+          return <span key={index}>{token.text}</span>;
+        }
 
-        let math: string | null = null;
+        let math = token.text;
         let block = false;
 
-        if (part.startsWith("\\[") && part.endsWith("\\]")) {
-          math = part.slice(2, -2).trim();
+        if (math.startsWith("\\[") && math.endsWith("\\]")) {
+          math = math.slice(2, -2).trim();
           block = true;
-        } else if (part.startsWith("\\(") && part.endsWith("\\)")) {
-          math = part.slice(2, -2).trim();
-        } else if (part.startsWith("$$") && part.endsWith("$$")) {
-          math = part.slice(2, -2).trim();
+        } else if (math.startsWith("\\(") && math.endsWith("\\)")) {
+          math = math.slice(2, -2).trim();
+        } else if (math.startsWith("$$") && math.endsWith("$$")) {
+          math = math.slice(2, -2).trim();
           block = true;
-        } else if (part.startsWith("$") && part.endsWith("$")) {
-          math = part.slice(1, -1).trim();
+        } else if (math.startsWith("$") && math.endsWith("$")) {
+          math = math.slice(1, -1).trim();
+        } else if (/(^|[^\\])\\begin\{[a-zA-Z*]+\}/.test(math)) {
+          // A \begin{...}...\end{...} environment arrives as a single token.
+          // Render it WHOLE (keep \begin{...}/\end{...}): stripping them leaves
+          // bare "&" alignment operators, which KaTeX rejects outside an env
+          // -> red katex-error -> raw \text{} fragments visible. Wrapping the
+          // full env keeps every & valid inside the alignment.
+          block = true;
+        } else if (PSEUDO_COMMANDS[math.trim()]) {
+          // bare \pH etc -> \text{pH} as inline
+          return (
+            <Fragment key={index}>
+              {safeKaTeX(PSEUDO_COMMANDS[math.trim()], false)}
+            </Fragment>
+          );
         }
 
-        if (math !== null) {
-          try {
-            return block ? (
-              <BlockMath key={index} math={math} renderError={() => <span>{math}</span>} />
-            ) : (
-              <InlineMath key={index} math={math} renderError={() => <span>{math}</span>} />
-            );
-          } catch {
-            // Invalid LaTeX — show the raw math text rather than crashing.
-            return <Fragment key={index}>{math}</Fragment>;
-          }
-        }
-
-        // No delimiters: if this segment itself looks like a bare math
-        // fragment (e.g. "x = \\frac{-b ...}{2a}"), render it as KaTeX.
-        const trimmed = part.trim();
-        if (hasMathFragment(trimmed)) {
-          try {
-            return (
-              <InlineMath
-                key={index}
-                math={trimmed}
-                renderError={() => <span>{part}</span>}
-              />
-            );
-          } catch {
-            return <span key={index}>{part}</span>;
-          }
-        }
-
-        return <span key={index}>{part}</span>;
+        return <Fragment key={index}>{safeKaTeX(simplifyMath(math), block)}</Fragment>;
       })}
     </span>
   );

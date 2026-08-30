@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { cloudflareChatCompletion } from "@/lib/cloudflare";
+import { trimCot } from "@/lib/sanitize";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
@@ -36,7 +38,18 @@ function buildPrompt(body: AskStepRequestBody): string {
     - Do NOT restate the problem, step number, or context.
     - Do NOT add greetings, intros, or sign-offs.
     - Do NOT include chain-of-thought, reasoning, or any internal thinking.
-    - Use \\( ... \\) for inline math and \\[ ... \\] for display math when helpful.
+    - Use \\( ... \\) for inline math and $$ ... $$ for block math when helpful.
+    - **Symbol Rule:** NEVER use raw Unicode symbols inside math (e.g. μ, α, β, ×, ÷, ≤, ≥, °, →). ALWAYS use the proper LaTeX command instead (e.g. \\mu, \\alpha, \\beta, \\times, \\div, \\leq, \\geq, ^{\\circ}, \\rightarrow).
+    - **CRITICAL FORMATTING RULES:**
+      * Math Delimiters: You MUST wrap all block/multi-line equations inside double dollar signs on their own lines. Never output naked LaTeX environments. Example:
+        $$
+        \\begin{aligned}
+        x &= y \\\
+        \\end{aligned}
+        $$
+      * Text Separation: Never use \\text{} inside math blocks to write full sentences, lists, or clinical steps. Write normal prose in standard Markdown outside of the $$ blocks.
+      * Spacing: Always leave a blank empty line before and after any $$ block so the Markdown parser recognizes it.
+      * NEVER output continuous horizontal equation chains on a single line (e.g., avoiding "A = B = C = D"). You MUST break long multi-step calculations vertically. Use multi-line LaTeX blocks like \\begin{aligned} ... \\end{aligned} and insert a newline \\\\ before every equals sign so the math stacks vertically.
     - Keep it concise (1-4 short sentences usually).
   `;
 }
@@ -71,7 +84,7 @@ async function askGroq(body: AskStepRequestBody): Promise<string> {
 
   const text = completion.choices[0]?.message?.content || "";
   if (!text) throw new Error("Empty response from Groq");
-  return stripReasoning(text);
+  return trimCot(stripReasoning(text));
 }
 
 /** Fallback: Google Gemini (same model as solve route) */
@@ -83,14 +96,24 @@ async function askGemini(body: AskStepRequestBody): Promise<string> {
   const text = result.response.text();
 
   if (!text) throw new Error("Empty response from Gemini");
-  return stripReasoning(text);
+  return trimCot(stripReasoning(text));
+}
+
+/** Fallback 2: Cloudflare AI (Strictly qwen3.8-27b and gemini-3.7-flash only) */
+async function askCloudflare(body: AskStepRequestBody): Promise<string> {
+  const text = await cloudflareChatCompletion(
+    [{ role: "user", content: buildPrompt(body) }],
+    { temperature: 0.2, maxTokens: 2048, tag: "ask-step" },
+  );
+  return trimCot(stripReasoning(text));
 }
 
 /**
  * Step Q&A endpoint with automatic failover:
  * 1. Try Groq (qwen3.6-27b) — same model as /api/solve
- * 2. On any error, fall back to Gemini (3.5-flash) — same as /api/solve
- * 3. If both fail, return structured error
+ * 2. Fall back to Gemini (3.5-flash) — same as /api/solve
+ * 3. Fall back to Cloudflare (qwen3.8-27b & gemini-3.7-flash)
+ * 4. If all fail, return structured error
  */
 export async function POST(request: Request) {
   try {
@@ -109,8 +132,9 @@ export async function POST(request: Request) {
       const answer = await askGroq(body);
       console.log("[ask-step] Groq succeeded");
       return NextResponse.json({ answer });
-    } catch (groqErr: any) {
-      console.warn("[ask-step] Groq failed:", groqErr.message);
+    } catch (groqErr) {
+      const error = groqErr instanceof Error ? groqErr : new Error(String(groqErr));
+      console.warn("[ask-step] Groq failed:", error.message);
     }
 
     // --- Attempt 2: Gemini ---
@@ -119,18 +143,31 @@ export async function POST(request: Request) {
       const answer = await askGemini(body);
       console.log("[ask-step] Gemini fallback succeeded");
       return NextResponse.json({ answer });
-    } catch (geminiErr: any) {
-      console.error("[ask-step] Gemini fallback failed:", geminiErr.message);
+    } catch (geminiErr) {
+      const error = geminiErr instanceof Error ? geminiErr : new Error(String(geminiErr));
+      console.warn("[ask-step] Gemini fallback failed:", error.message);
+    }
+
+    // --- Attempt 3: Cloudflare (qwen3.8-27b & gemini-3.7-flash only) ---
+    try {
+      console.log("[ask-step] Falling back to Cloudflare third failsafe...");
+      const answer = await askCloudflare(body);
+      console.log("[ask-step] Cloudflare third failsafe succeeded");
+      return NextResponse.json({ answer });
+    } catch (cfErr) {
+      const error = cfErr instanceof Error ? cfErr : new Error(String(cfErr));
+      console.error("[ask-step] Cloudflare third failsafe failed:", error.message);
     }
 
     return NextResponse.json(
-      { error: "Both answer providers failed. Please try again later." },
+      { error: "All answer providers (Groq, Gemini, Cloudflare) failed. Please try again later." },
       { status: 502 },
     );
-  } catch (error: any) {
-    console.error("Ask step API unexpected error:", error);
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.error("Ask step API unexpected error:", err);
     return NextResponse.json(
-      { error: "Internal server error: " + error.message },
+      { error: "Internal server error: " + err.message },
       { status: 500 },
     );
   }

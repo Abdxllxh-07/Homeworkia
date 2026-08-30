@@ -53,19 +53,113 @@ body {
   font-family: var(--font-body), system-ui, sans-serif;
 }
 
+/* Universal guard: no element may ever make the page itself scroll
+   horizontally (a wide KaTeX formula, code, or long unbreakable token
+   that escaped its container would otherwise push the whole page "outside
+   the box"). clip (vs hidden) also keeps sticky/fixed positioning intact.
+   Wide formulas still remain fully accessible: each .katex-html scrolls
+   internally. */
+html,
+body {
+  overflow-x: clip;
+}
+
 ::selection {
   background: var(--accent-soft);
   color: var(--accent-ink);
 }
 
 .katex {
-  font-size: 1.05em;
+  font-size: 1.1em;
+  padding: 4px 0;
 }
 
+/* --- Universal KaTeX containment ---
+   KaTeX renders display-mode formulas as unbreakable horizontal lines and
+   centers them with negative margins, which lets a wide formula escape its
+   container and blow out the whole page width (esp. on mobile).
+   These rules force every .katex-display block to stay inside its parent and
+   scroll internally instead of expanding the page. Applied globally so it
+   fixes every subject/question, not just one. */
 .katex-display {
-  margin: 0.75rem 0;
+  margin: 0.25em 0;
+  max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
+}
+.katex-display > .katex {
+  display: inline-block;
+  max-width: 100%;
+}
+/* Prevent inner elements from forcing the block wider than its container. */
+.katex-display .katex-html {
+  max-width: 100%;
+  overflow-x: auto;
+}
+/* Inline math (not display) can be wider than its line (e.g. a long final
+   answer formula). .katex is display:inline by default, and inline boxes
+   cannot be scroll containers, so a wide .katex-html blows out the
+   document's scroll width. Give the KaTeX node an inline-block box and let
+   .katex-html scroll internally instead. */
+.katex {
+  display: inline-block;
+  max-width: 100%;
+}
+.katex .katex-html {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+/* KaTeX accessibility layer is position:absolute; stop it affecting layout.
+   The MathML mirror is often wider than its visible KaTeX. Even with
+   overflow:hidden + clip on the wrapper, its inner static math/semantics
+   boxes still inflate document scrollWidth ("outside the box"). Completely
+   removing it from layout fixes the overflow universally; the visual KaTeX
+   HTML remains fully rendered and interactive. */
+.katex-display .katex-mathml,
+.katex .katex-mathml {
+  display: none;
+}
+
+/* --- Scrollbars: thin, subtle, theme-matched ---
+   Content that overflows (wide KaTeX formulas, long answers) scrolls inside
+   its own container via overflow-x/overflow-y:auto, so a scrollbar only
+   appears when there is something to scroll. By default browsers render
+   chunky, high-contrast bars that dominate the UI. These rules shrink them
+   to slim rounded "hairline" bars that fade into the surface and tint with
+   the accent on hover — while keeping them fully usable. Applied globally,
+   so every scrollable box in every subject/question gets the same look. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--border) 80%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--accent) 70%, transparent);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* --scrollbar-hide: hide the scrollbar entirely while keeping the element
+   scrollable via wheel/touch/swipe. Used in compact areas (e.g. the Q&A
+   panel header formula) where a visible bar would be noise. */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }
 
 @keyframes panel-in {

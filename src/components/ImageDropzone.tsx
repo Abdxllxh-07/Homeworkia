@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useId, useRef } from "react";
+import type { ClipboardEvent } from "react";
 import { useDropzone } from "react-dropzone";
 import { Camera, ImagePlus, Upload, X } from "lucide-react";
 
@@ -17,7 +18,19 @@ export function ImageDropzone({
   onClear,
   disabled = false,
 }: ImageDropzoneProps) {
-  const cameraInputRef = useRef<HTMLInputElement>(null);
+  // Deterministic id (React's useId) — stable between server & client so the
+  // label htmlFor === input id match after hydration.
+  const pickerId = useId();
+  const cameraId = `${pickerId}-camera`;
+
+  // React's synthetic onChange (root-delegated) is FLAKY for <input type="file">
+  // on real mobile devices — the picker opens, the file is selected, but the
+  // change event is sometimes never processed (timing / iOS Safari quirks).
+  // Bulletproof fix: attach NATIVE change listeners directly to the inputs via
+  // refs, completely bypassing React's event delegation. This is the universal
+  // fix that works on every browser/device.
+  const pickerRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
 
   const onDrop = useCallback(
     (accepted: File[]) => {
@@ -27,68 +40,121 @@ export function ImageDropzone({
     [onFileAccepted],
   );
 
-  const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".heic"] },
     multiple: false,
     disabled,
-    noClick: Boolean(previewUrl),
-    noKeyboard: Boolean(previewUrl),
+    noClick: true, // Never rely on synthetic clicks for the root — mobile-safe.
+    noKeyboard: true,
   });
 
+  const handleDrop = useCallback(
+    (input: HTMLInputElement) => {
+      const file = input.files?.[0];
+      if (file) onFileAccepted(file);
+      // Allow selecting the same file again next time.
+      input.value = "";
+    },
+    [onFileAccepted],
+  );
+
+  // Extract the first image from a ClipboardEvent (Ctrl/Cmd+V anywhere on the
+  // dropzone) so desktop users can paste a screenshot directly.
+  const handlePaste = useCallback(
+    (e: ClipboardEvent<HTMLElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            onFileAccepted(file);
+            return;
+          }
+        }
+      }
+    },
+    [onFileAccepted],
+  );
+
+  // Native listeners bypass React's synthetic event system entirely.
+  // Guarantees the selected file is picked up even where React's delegated
+  // "input" event listener is unreliable (iOS Safari + file inputs).
+  useEffect(() => {
+    const picker = pickerRef.current;
+    const camera = cameraRef.current;
+    const onPickerChange = () => picker && handleDrop(picker);
+    const onCameraChange = () => camera && handleDrop(camera);
+    picker?.addEventListener("change", onPickerChange);
+    camera?.addEventListener("change", onCameraChange);
+    return () => {
+      picker?.removeEventListener("change", onPickerChange);
+      camera?.removeEventListener("change", onCameraChange);
+    };
+  }, [handleDrop]);
+
   return (
-    <section className="w-full">
+    <section
+      className="w-full"
+      onPaste={handlePaste}
+      title="Tip: press Ctrl/Cmd+V to paste a screenshot"
+    >
       {!previewUrl ? (
-        <div
-          {...getRootProps()}
-          className={[
-            "group relative flex min-h-[220px] cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed px-6 py-10 text-center transition",
-            isDragActive
-              ? "border-accent bg-accent-soft/60"
-              : "border-border bg-surface hover:border-accent/60 hover:bg-surface-soft/70",
-            disabled ? "pointer-events-none opacity-60" : "",
-          ].join(" ")}
-          style={{ touchAction: "manipulation" }}
-        >
-          <input {...getInputProps()} />
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-accent">
-            <Upload className="h-6 w-6" strokeWidth={2} />
+        <div>
+          <div
+            {...getRootProps()}
+            className={[
+              "group relative flex min-h-[220px] cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed px-6 py-10 text-center transition",
+              isDragActive
+                ? "border-accent bg-accent-soft/60"
+                : "border-border bg-surface hover:border-accent/60 hover:bg-surface-soft/70",
+              disabled ? "pointer-events-none opacity-60" : "",
+            ].join(" ")}
+            style={{ touchAction: "manipulation" }}
+          >
+            <input {...getInputProps()} />
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+              <Upload className="h-6 w-6" strokeWidth={2} />
+            </div>
+            <div className="space-y-1">
+              <p className="text-lg font-semibold text-foreground">
+                {isDragActive ? "Drop it here" : "Drop a homework photo"}
+              </p>
+              <p className="text-sm text-muted">
+                PNG, JPG, or WEBP — or take a photo on mobile
+              </p>
+            </div>
           </div>
-          <div className="space-y-1">
-            <p className="text-lg font-semibold text-foreground">
-              {isDragActive ? "Drop it here" : "Drop a homework photo"}
-            </p>
-            <p className="text-sm text-muted">
-              PNG, JPG, or WEBP — or take a photo on mobile
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                open();
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
+
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+            {/* Native <label> + hidden input — the gold standard for mobile file
+                uploads. No synthetic .click() needed, works on iOS/Android. */}
+            <label
+              htmlFor={pickerId}
+              aria-disabled={disabled}
               style={{ touchAction: "manipulation" }}
-              className="inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-ink hover:shadow-md"
+              className={
+                "inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-xl bg-accent px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-ink hover:shadow-md active:scale-[0.98] " +
+                (disabled ? "pointer-events-none opacity-60" : "")
+              }
             >
               <ImagePlus className="h-4 w-4" />
               Choose image
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                cameraInputRef.current?.click();
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
+            </label>
+            <label
+              htmlFor={cameraId}
+              aria-disabled={disabled}
               style={{ touchAction: "manipulation" }}
-              className="inline-flex items-center gap-2 rounded-xl border-2 border-border bg-surface px-5 py-3 text-sm font-semibold text-foreground transition hover:bg-surface-soft hover:border-accent/40"
+              className={
+                "inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-xl border-2 border-border bg-surface px-6 py-3 text-sm font-semibold text-foreground transition hover:bg-surface-soft hover:border-accent/40 active:scale-[0.98] " +
+                (disabled ? "pointer-events-none opacity-60" : "")
+              }
             >
               <Camera className="h-4 w-4" />
               Use camera
-            </button>
+            </label>
           </div>
         </div>
       ) : (
@@ -112,20 +178,27 @@ export function ImageDropzone({
         </div>
       )}
 
+      {/* Standards-compliant approach: inputs are visually hidden but present in
+          the DOM. Some mobile browsers (esp. iOS Safari) ignore .click() on
+          display:none inputs, so we use sr-only-style hiding instead. The
+          change handler is attached NATIVELY (via ref) not via React's synthetic
+          onChange — see the useEffect above. */}
       <input
-        ref={cameraInputRef}
+        id={pickerId}
+        ref={pickerRef}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        disabled={disabled}
+      />
+      <input
+        id={cameraId}
+        ref={cameraRef}
         type="file"
         accept="image/*"
         capture="environment"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) {
-            onFileAccepted(file);
-          }
-          // Reset value so same file can be captured again if removed
-          e.target.value = "";
-        }}
+        className="sr-only"
+        disabled={disabled}
       />
     </section>
   );

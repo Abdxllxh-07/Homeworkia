@@ -1,14 +1,15 @@
 import { Code2, Heart } from "lucide-react";
+import Link from "next/link";
 
 export function SiteHeader() {
   return (
     <header className="border-b border-border/80 bg-surface/70 backdrop-blur-md">
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-        <a href="/" className="group flex items-baseline gap-2">
+        <Link href="/" className="group flex items-baseline gap-2">
           <span className="font-[family-name:var(--font-display)] text-xl font-extrabold tracking-tight text-foreground sm:text-2xl">
             Homeworkia
           </span>
-        </a>
+        </Link>
 
         <div className="flex items-center gap-2 sm:gap-3">
           <span className="hidden items-center gap-1.5 rounded-xl bg-accent-soft px-2.5 py-1 text-xs font-semibold text-accent-ink sm:inline-flex">

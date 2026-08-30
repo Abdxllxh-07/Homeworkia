@@ -1,12 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { useEffect, useSyncExternalStore, useState } from "react";
+import { Bookmark, Loader2, Sparkles } from "lucide-react";
 import { ImageDropzone } from "@/components/ImageDropzone";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SolutionPanel } from "@/components/SolutionPanel";
 import { StepChatPanel } from "@/components/StepChatPanel";
+import { SavedAnswersPanel } from "@/components/SavedAnswersPanel";
+import type { SavedAnswer } from "@/lib/saved-answers";
+import {
+  clearSavedAnswers,
+  deleteSavedAnswer,
+  getSavedAnswersSnapshot,
+  saveAnswer,
+  subscribeSavedAnswers,
+} from "@/lib/saved-answers";
 import type { SolveResult, SolutionStep } from "@/types/solve";
+
+// Stable reference for the server snapshot of useSyncExternalStore — must not
+// create a fresh array each call or React warns about an infinite loop.
+const EMPTY_SAVED: SavedAnswer[] = [];
 
 export default function HomePage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -16,6 +29,15 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState<SolutionStep | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
+
+  // External store: saved answers from localStorage, kept in sync across tabs.
+  const saved = useSyncExternalStore(
+    subscribeSavedAnswers,
+    getSavedAnswersSnapshot,
+    () => EMPTY_SAVED,
+  );
 
   useEffect(() => {
     return () => {
@@ -29,6 +51,8 @@ export default function HomePage() {
     setSelectedFile(file);
     setResult(null);
     setError(null);
+    setActiveSavedId(null);
+    setJustSaved(false);
   }
 
   function handleClear() {
@@ -40,6 +64,8 @@ export default function HomePage() {
     setSolving(false);
     setChatOpen(false);
     setActiveStep(null);
+    setActiveSavedId(null);
+    setJustSaved(false);
   }
 
   async function handleSolve() {
@@ -70,12 +96,56 @@ export default function HomePage() {
 
       const data = await response.json();
       setResult(data);
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || "An unexpected error occurred");
+
+      // Auto-save the solve so re-testing this question is instant (no new
+      // AI call). Works universally for every subject/question. The stored
+      // provider = WHICH AI solved it (groq|gemini|cloudflare), so the saved
+      // card shows the real solver; "auto" (auto-save) is implicit.
+      const { id } = saveAnswer({
+        name: selectedFile.name,
+        result: data as SolveResult,
+        preview: previewUrl,
+        provider: (data as SolveResult).provider || "auto",
+      });
+      setActiveSavedId(id);
+      setJustSaved(true);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error(error);
+      setError(error.message || "An unexpected error occurred");
     } finally {
       setSolving(false);
     }
+  }
+
+  function handleSaveCurrent() {
+    if (!result) return;
+    const { id } = saveAnswer({
+      name: selectedFile?.name || "Solved question",
+      result,
+      preview: previewUrl,
+      provider: "manual",
+    });
+    setActiveSavedId(id);
+    setJustSaved(true);
+  }
+
+  function handleLoadSaved(item: SavedAnswer) {
+    setResult(item.result);
+    setActiveSavedId(item.id);
+    setJustSaved(false);
+    setError(null);
+    setChatOpen(false);
+  }
+
+  function handleDeleteSaved(id: string) {
+    deleteSavedAnswer(id);
+    if (activeSavedId === id) setActiveSavedId(null);
+  }
+
+  function handleClearAllSaved() {
+    clearSavedAnswers();
+    setActiveSavedId(null);
   }
 
   function handleAskStep(step: SolutionStep) {
@@ -108,6 +178,9 @@ export default function HomePage() {
             <p className="mx-auto mt-3 max-w-lg text-base leading-relaxed text-muted sm:text-lg">
               Snap a problem, get clear steps, and ask questions.
             </p>
+            <p className="mx-auto mt-3 max-w-lg text-base leading-relaxed text-muted sm:text-lg">
+              (Note: AI is not 100% accurate and may produce incorrect results, always double check the answers.)
+            </p>
           </div>
 
           <div className="relative mx-auto mt-6 max-w-2xl space-y-4">
@@ -130,28 +203,64 @@ export default function HomePage() {
                     </p>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={handleSolve}
-                  disabled={solving}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-white transition hover:bg-accent-ink disabled:opacity-60"
-                >
-                  {solving ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Solving…
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-4 w-4" />
-                      Solve problem
-                    </>
+                <div className="flex flex-wrap items-center gap-2">
+                  {result && (
+                    <button
+                      type="button"
+                      onClick={handleSaveCurrent}
+                      disabled={solving || justSaved}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-surface px-5 py-3 text-sm font-semibold text-accent-ink transition hover:border-accent/40 hover:bg-accent-soft disabled:opacity-60"
+                    >
+                      <Bookmark className="h-4 w-4" />
+                      {justSaved ? "Saved" : "Save answer"}
+                    </button>
                   )}
-                </button>
+                  <button
+                    type="button"
+                    onClick={handleSolve}
+                    disabled={solving}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-white transition hover:bg-accent-ink disabled:opacity-60"
+                  >
+                    {solving ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Solving…
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4" />
+                        Solve problem
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             )}
           </div>
         </section>
+
+        {saved.length > 0 && (
+          <div className="mt-6">
+            <SavedAnswersPanel
+              saved={saved}
+              onLoad={handleLoadSaved}
+              onDelete={handleDeleteSaved}
+              activeId={activeSavedId}
+            />
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-xs text-muted">
+                {saved.length} saved answer{saved.length === 1 ? "" : "s"} (Note: The saved answers are stored within the browser{"'"}s LocalStorage, and do not contribute to your daily limit.)
+              </span>
+              <button
+                type="button"
+                onClick={handleClearAllSaved}
+                className="text-xs font-medium text-danger transition hover:underline"
+              >
+                Clear all
+              </button>
+            </div>
+          </div>
+        )}
 
         {result && (
           <div className="mt-8 sm:mt-10">

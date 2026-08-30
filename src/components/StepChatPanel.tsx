@@ -19,8 +19,12 @@ export function StepChatPanel({ step, open, onClose, result }: StepChatPanelProp
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
 
-  useEffect(() => {
-    if (!open || !step) return;
+  // Reset messages/draft when switching to a different step.
+  // (React-recommended "adjust state during render" pattern — avoids setState in effects.)
+  const [prevStepKey, setPrevStepKey] = useState<string | null>(null);
+  const stepKey = step ? `${step.stepNumber}-${step.title}` : null;
+  if (open && step && prevStepKey !== stepKey) {
+    setPrevStepKey(stepKey);
     setMessages([
       {
         id: "intro",
@@ -29,6 +33,10 @@ export function StepChatPanel({ step, open, onClose, result }: StepChatPanelProp
       },
     ]);
     setDraft("");
+  }
+
+  useEffect(() => {
+    if (!open || !step) return;
     const timer = window.setTimeout(() => inputRef.current?.focus(), 150);
     return () => window.clearTimeout(timer);
   }, [open, step]);
@@ -87,8 +95,9 @@ export function StepChatPanel({ step, open, onClose, result }: StepChatPanelProp
           content: data.answer,
         },
       ]);
-    } catch (err: any) {
-      console.error(err);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error(error);
       setMessages((prev) => [
         ...prev,
         {
@@ -125,7 +134,7 @@ export function StepChatPanel({ step, open, onClose, result }: StepChatPanelProp
             <h2 id={titleId} className="mt-1 text-lg font-semibold text-foreground">
               Step {step.stepNumber}: {step.title}
             </h2>
-            <div className="mt-2 text-sm text-muted">
+            <div className="mt-2 text-sm text-muted w-full max-w-full overflow-x-auto min-w-0 scrollbar-hide">
               <MathText>{step.mathFormula}</MathText>
             </div>
           </div>
@@ -150,11 +159,13 @@ export function StepChatPanel({ step, open, onClose, result }: StepChatPanelProp
                   : "mr-auto bg-surface-soft text-foreground border border-border/50",
               ].join(" ")}
             >
-              {msg.role === "assistant" ? (
-                <MathText>{msg.content}</MathText>
-              ) : (
-                msg.content
-              )}
+              <div className="w-full max-w-full overflow-x-auto min-w-0">
+                {msg.role === "assistant" ? (
+                  <MathText>{msg.content}</MathText>
+                ) : (
+                  msg.content
+                )}
+              </div>
             </div>
           ))}
           {sending && (
