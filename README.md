@@ -34,11 +34,13 @@ cd homework-ia
 
 npm install
 ```
-2. Create an .env.local file in the root directory based on your expected keys.
+2. Create an .env.local file (or open up and rename the env.example file) in the root directory based on your expected keys.
 
 ```code snippet
-GROQ_API_KEY = your_key_here_groq
-GEMINI_API_KEY = your_key_here_gemini
+GROQ_API_KEY=[YOUR_GROQ_API_KEY]
+GEMINI_API_KEY=[YOUR_GEMINI_API_KEY]
+CLOUDFLARE_API_KEY=[YOUR_CLOUDFLARE_API_KEY]
+CLOUDFLARE_ACCOUNT_ID=[YOUR_CLOUDFLARE_ACCOUNT_ID]
 ```
 3. Run the development server
 
