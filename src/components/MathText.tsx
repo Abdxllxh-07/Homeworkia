@@ -507,6 +507,32 @@ export function MathText({
     if (/^\\\[[\s\S]*\\\]$/.test(math)) math = math.slice(2, -2).trim();
     else if (/^\$\$[\s\S]*\$\$$/.test(math)) math = math.slice(2, -2).trim();
 
+    // Multiple SEPARATE \begin{...}\end{...} blocks, or real prose sitting
+    // OUTSIDE of a block (e.g. two \begin{aligned} blocks with "Comparing
+    // this to ..., we identify ..." in between — a very common shape for
+    // step-by-step derivations) are never one well-formed formula. Feeding
+    // the whole thing into a single katex.renderToString call always fails
+    // to parse (KaTeX chokes on the stray \( \) / English words) and falls
+    // back to showing the raw LaTeX source as plain text. Detect that here
+    // and delegate to the env-aware, prose-aware mixed renderer below
+    // instead, which keeps each block intact while still rendering the
+    // prose between them.
+    const envBlockCount = (math.match(/\\begin\{[a-zA-Z*]+\}/g) || []).length;
+    const outsideEnvText = math.replace(
+      /\\begin\{[a-zA-Z*]+\}[\s\S]*?\\end\{[a-zA-Z*]+\}/g,
+      " "
+    );
+    const hasProseOutsideEnv = /[A-Za-zÀ-ž]{4,}/.test(
+      outsideEnvText.replace(/\\[a-zA-Z]+/g, " ")
+    );
+    if (envBlockCount > 1 || (envBlockCount === 1 && hasProseOutsideEnv)) {
+      return (
+        <div className={`mx-auto w-full max-w-full ${className}`}>
+          <MathText>{math}</MathText>
+        </div>
+      );
+    }
+
     // If this "display" content is actually prose (clinical lists, drug tables,
     // contraindications...), render it as readable, wrapping text with inline
     // math rather than one unbreakable KaTeX line. This universally fixes the
@@ -558,11 +584,19 @@ export function MathText({
   //   2) A BARE \begin{...}...\end{...} environment — LLMs often omit the $$
   //      wrapper; the & alignment operators are only valid INSIDE the env, so
   //      fragmenting it breaks every line. (Prose never contains \begin{...}.)
+  const containsEnv = /\\begin\{[a-zA-Z*]+\}/.test(cleanedProse);
   const isMultilineMathBlock =
     (cleanedProse.startsWith("$$") && cleanedProse.endsWith("$$")) ||
     (cleanedProse.startsWith("\\[") && cleanedProse.endsWith("\\]"));
-  const containsEnv = /\\begin\{[a-zA-Z*]+\}[\s\S]*?\\end\{[a-zA-Z*]+\}/.test(cleanedProse);
 
+  // Only split line-by-line when there's no \begin{...}\end{...} environment
+  // anywhere in the text — an environment spans multiple lines (its "\\" row
+  // separators and "&" alignment markers only make sense together), so naive
+  // \n-splitting would shred it into unrenderable fragments. When an env IS
+  // present, skip straight to splitMixed below: it already captures each
+  // \begin...\end block as ONE atomic token and correctly interleaves it
+  // with any surrounding prose/inline math, no matter how many separate
+  // blocks or paragraphs are present.
   if (proseLines.length > 1 && !isMultilineMathBlock && !containsEnv) {
     return (
       <span className={`block space-y-1 ${className}`.trim()}>
@@ -582,7 +616,9 @@ export function MathText({
   if (isMultilineMathBlock) {
     let math = cleanedProse;
     if (math.startsWith("$$") && math.endsWith("$$")) math = math.slice(2, -2).trim();
-    else math = math.slice(2, -2).trim();
+    else if (math.startsWith("\\[") && math.endsWith("\\]")) math = math.slice(2, -2).trim();
+    // else: bare \begin{...}...\end{...} with no $$/\[ wrapper — leave as-is,
+    // there is nothing to strip.
     return (
       <span className={`block my-2 overflow-x-auto max-w-full ${className}`.trim()}>
         {safeKaTeX(simplifyMath(math), true)}
@@ -597,7 +633,7 @@ export function MathText({
       {tokens.map((token, index) => {
         if (!token.math) {
           return <span key={index}>{token.text}</span>;
-        }
+        } 
 
         let math = token.text;
         let block = false;
@@ -613,11 +649,7 @@ export function MathText({
         } else if (math.startsWith("$") && math.endsWith("$")) {
           math = math.slice(1, -1).trim();
         } else if (/(^|[^\\])\\begin\{[a-zA-Z*]+\}/.test(math)) {
-          // A \begin{...}...\end{...} environment arrives as a single token.
-          // Render it WHOLE (keep \begin{...}/\end{...}): stripping them leaves
-          // bare "&" alignment operators, which KaTeX rejects outside an env
-          // -> red katex-error -> raw \text{} fragments visible. Wrapping the
-          // full env keeps every & valid inside the alignment.
+          math=math.replace(/^(\$\$|\\\[|\\\()/, "").replace(/(\$\$|\\\]|\\\))$/, "").trim();
           block = true;
         } else if (PSEUDO_COMMANDS[math.trim()]) {
           // bare \pH etc -> \text{pH} as inline
