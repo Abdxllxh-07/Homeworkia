@@ -74,9 +74,9 @@ Right now the route returns mock data so the contract is in place.
 
 ## Showcase
 
-![Showcasing the front page](./showcase.png)
-![Showcasing it answering a question](./showcase2.png)
-![Showcasing the chat function](./showcase3.png)
+![Showcasing the front page](./Images/showcase.png)
+![Showcasing it answering a question](./Images/showcase2.png)
+![Showcasing the chat function](./Images/showcase3.png)
 <img src="mobileshowcase.jpg" height="450">
 
 

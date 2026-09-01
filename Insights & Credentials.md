@@ -8,7 +8,7 @@ I also delve into a debate I have had with myself, about whether vibecoding is a
 
 ***I, by no means, think vibecoding is harder than actual coding. The diverse and deep skillset of software development cannot be undermined/undervalued. With that being said, saying I didn't learn anything from this would be undermining me, as I did end up trying far more then I expected, albeit to what would've been a far less degree. In the pursuit of knowledge, I succeeded.*** 
 
-![Image of Omniroute homepage to show what it looks like](./Ijustneedyourpath.png) 
+![Image of Omniroute homepage to show what it looks like](./Images/Ijustneedyourpath.png) 
 
 ### Financial Struggles with Omniroute
 
@@ -18,9 +18,9 @@ What I did was use the free services, aswell as expend the usage on the premium 
 
 ### Repeated Errors
 
-<img src="thisisforinsights.png" width="200" height="100">
-<img src="thisisalsoforinsightshowdidyouknow.png" width="150" height ="100">  
-<img src="Photovers.jpg"  height="200">
+<img src="Images/thisisforinsights.png" width="200" height="100">
+<img src="Images/thisisalsoforinsightshowdidyouknow.png" width="150" height ="100">  
+<img src="Images/Photovers.jpg"  height="200">
 
  The biggest problem when creating the website was syntax errors, or answers going over the text box, as this was something that would repeat many times over. As with working with AI, the same issue is bound to pop up many times, and given I wanted to stress-test my model, I dedcided to give it some of the hardest work I could find, only to see "it is now fixed, this won't prevail" only for it to previal for the 17th time. It forced me to dive deeper into the code of my website.
 
@@ -41,9 +41,9 @@ What I did was use the free services, aswell as expend the usage on the premium 
 
  ## Credits
 
- IPITSM (2026). Test image used . [Test image 2](./test-question2.jpeg)
+ IPITSM (2026). Test image used . [Test image 2](./Images/test-question2.jpeg)
 
- University of Exeter (2025). Mathematics for Physicists PHY 1026 . [Showcase 2](./showcase2.png)
+ University of Exeter (2025). Mathematics for Physicists PHY 1026 . [Showcase 2](./Images/showcase2.png)
 
 
 
