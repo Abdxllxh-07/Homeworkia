@@ -6,7 +6,7 @@ Throw your problem, get a step-by-step solution and ask whatever questions about
 
 **This website is entirely free**, cost me £3.50 (costs are discussed in Insights) to make and **100% open sourced**. I intend to use it for my own personal use as I am studying my degree. It is supposed to be universal, however **excels in maths/physics**, with a lot of the stress testing being using my homework or, the homework of a very generous emergency nursing student in Morocco.
 
-**Homeworkia is *vibecoded***, pretty obviously too. However, it has still been a fun process, with its own set of challenges. Despite barely interfering in the coding process, besides to write a note or two or to create markdown files for this page, there has been a lot of work which I further discuss in [Insights](./Insights.md). (I also discuss the debate on whether vibecoding is a skill or not, I'd strongly recommend checking it out).
+**Homeworkia is *vibecoded***, pretty obviously too. However, it has still been a fun process, with its own set of challenges. Despite barely interfering in the coding process, I have had to do a lot more than I initially expected [Insights](./Insights.md). (I also discuss the debate on whether vibecoding is a skill or not, I'd strongly recommend checking it out).
 
 *The technical part of this all comes next, such as the setup and the tools used, this is just to introduce and give an idea as to where this came from.*
 ## Tech Stack
@@ -22,7 +22,7 @@ Throw your problem, get a step-by-step solution and ask whatever questions about
 
 Currently, the Scaffolding and responsive UI uses **mock solve data** to verify the layout. The use of AI is accomplished via Groq Qwen 3.6 27B, Gemini 3.7 Flash and Cloudfare API, limited to both models previously aforementioned
 
-*Note: Omniroute was strictly for vibecoding and not needed in the actual live application itself*
+*Note: Omniroute was strictly for vibecoding/creation and not needed in the actual live application itself*
 
 ## Getting started
 
